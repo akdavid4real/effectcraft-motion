@@ -31,7 +31,8 @@ MCP is optional. Kit location: the folder containing this file (call it `$KIT`).
    Custom scene code is for what no layout covers (a map, a product mock-up), and it still uses the
    look's palette `P(S.bg)` and type sizes `LOOK.type`.
 5. Read `references/pitfalls.md` before writing any EffectCraft script. Read
-   `references/motion-design.md` and `references/looks.md` before designing scenes.
+   `references/motion-design.md`, `references/looks.md` and `references/techniques.md` (beat grid, peak-aligned
+   SFX, continuous morphs, ban list) before designing scenes.
 6. **The brand is not yours to edit** (`references/brand.md`). Show the real logo file, never the
    name typed as a wordmark. Write the tagline character for character. Invent no product names,
    button labels or stats. Fill in the `"brand"` block in `timeline.json` so `ec.py qa` checks this.
@@ -122,16 +123,19 @@ Write down which provider and voice you actually used.
 
 **3. Timeline**
 ```bash
-python3 $KIT/scripts/timeline.py suggest    # proposes scene in/out + voice_at from the voice lengths
+python3 $KIT/scripts/timeline.py beats      # music tempo, beats, bar starts, drop -> beats.json (needs "music")
+python3 $KIT/scripts/timeline.py suggest    # proposes scene in/out + voice_at; with beats.json, scenes end on beats
 # paste into timeline.json, set each scene's "bg" (light/dark/accent), add sfx cues anchored to words
 python3 $KIT/scripts/timeline.py words      # every word with its absolute time
 python3 $KIT/scripts/timeline.py check      # MUST be 0 FAIL
 python3 $KIT/scripts/timeline.py emit       # writes scripts/timing.jsx + scripts/wipes.jsx
 python3 $KIT/scripts/timeline.py mix        # writes soundtrack.wav (-14 LUFS)
 ```
-SFX `"at"` can be a number, `"s2:late"` (the word "late" in s2's voice; `"s2:the#2"` = 2nd "the"),
-`"wipe:s3"` (the transition into s3), `"in:s3"` or `"out:s3"`. Add `"offset"`, `"vol"`, and `"max"`
-(trim length).
+Cut on the beat: `timeline.py snap` moves existing cuts onto beats where the voice still fits; in scenes,
+`BEAT(n)`, `DOWNBEAT(n)`, `nearBeat(t)` and `T.drop` time slams and pops to the music (`references/techniques.md`).
+SFX `"at"` can be a number, `"beat:12"`, `"downbeat:3"`, `"drop"`, `"s2:late"` (the word "late" in s2's voice; `"s2:the#2"` = 2nd "the"),
+`"wipe:s3"` (the transition into s3), `"in:s3"` or `"out:s3"`. Add `"offset"`, `"vol"`, `"max"`
+(trim length) and `"align": "peak"` (the sound's loudest moment lands on the anchor: use it for impacts and pops).
 
 **4. Plan, then write the scenes.** First write the plan in `qa/design_review.md`
 (`references/design-review.md`, part 1-6): the colour script with one line per scene, the visual

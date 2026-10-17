@@ -6,6 +6,8 @@
   timeline.py emit    [project_dir]   write scripts/timing.jsx (T, used by SC()/W() in lib.jsx) + scripts/wipes.jsx
   timeline.py mix     [project_dir]   mix soundtrack.wav (voice + word-anchored SFX + ducked music)
   timeline.py suggest [project_dir]   propose scene in/out + voice offsets from the voice durations
+  timeline.py beats   [project_dir]   find the music's tempo, beats, bar starts and drop -> beats.json
+  timeline.py snap    [project_dir]   move scene cuts onto the nearest beat where the voice timing still fits
 
 project_dir defaults to the current directory. See SKILL.md for the timeline.json format.
 """
@@ -68,10 +70,33 @@ def abs_words(tl, voices):
     return out
 
 
-def resolve_at(spec, tl, voices, words):
-    """SFX 'at': number | 'sID:word' | 'sID:word#2' | 'wipe:sID' (wipe into scene) | 'in:sID' | 'out:sID'."""
+def load_beats(pdir):
+    """beats.json (from `timeline.py beats`), times already on the timeline; None when there is none."""
+    path = os.path.join(pdir, "beats.json")
+    return json.load(open(path)) if os.path.exists(path) else None
+
+
+def nearest_beat(t, grid):
+    return min(grid, key=lambda b: abs(b - t)) if grid else None
+
+
+def resolve_at(spec, tl, voices, words, beats=None):
+    """SFX 'at': number | 'sID:word' | 'sID:word#2' | 'wipe:sID' (wipe into scene) | 'in:sID' | 'out:sID'
+    | 'beat:N' / 'downbeat:N' (1-based, needs beats.json) | 'drop'."""
     if isinstance(spec, (int, float)):
         return float(spec)
+    if spec in ("drop",) or spec.startswith(("beat:", "downbeat:")):
+        if not beats:
+            raise SystemExit(f"FAIL sfx anchor '{spec}': no beats.json, run timeline.py beats first")
+        if spec == "drop":
+            if beats.get("drop") is None:
+                raise SystemExit("FAIL sfx anchor 'drop': no clear drop found in the music")
+            return float(beats["drop"])
+        kind, _, n = spec.partition(":")
+        grid = beats["beats"] if kind == "beat" else beats["downbeats"]
+        if not 1 <= int(n) <= len(grid):
+            raise SystemExit(f"FAIL sfx anchor '{spec}': the music has {len(grid)} {kind}s on the timeline")
+        return float(grid[int(n) - 1])
     kind, _, rest = spec.partition(":")
     sc_by_id = {s["id"]: s for s in scenes(tl)}
     if kind in ("wipe", "in", "out"):
@@ -87,6 +112,35 @@ def resolve_at(spec, tl, voices, words):
     if len(hits) < nth:
         raise SystemExit(f"FAIL sfx anchor '{spec}': word not found in voice {vid}")
     return hits[nth - 1][1]
+
+
+def sfx_peak(path, limit=None):
+    """Seconds from the start of a sound file to its loudest moment (within `limit` s, the cue's "max")."""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                         capture_output=True, check=True).stdout
+    import numpy as np
+    samples = np.abs(np.frombuffer(raw, np.int16).astype(np.float32))
+    if limit:
+        samples = samples[:int(float(limit) * 8000)]
+    if not len(samples):
+        return 0.0
+    # loudest 10 ms block, not the loudest single sample
+    blocks = samples[:len(samples) // 80 * 80].reshape(-1, 80).mean(axis=1)
+    return float(np.argmax(blocks)) * 0.01
+
+
+def sfx_time(cue, tl, voices, words, beats, pdir):
+    """When a cue's file starts playing. With "align": "peak" its loudest moment lands on the anchor instead of
+    its first sample (impacts, booms, pops often have a short lead-in before the hit)."""
+    t = resolve_at(cue["at"], tl, voices, words, beats) + float(cue.get("offset", 0))
+    if cue.get("align") == "peak":
+        t -= sfx_peak(sfx_path(cue, pdir), cue.get("max"))
+    return t
+
+
+def sfx_path(cue, pdir):
+    f = os.path.join(pdir, "assets", "sfx", cue["file"] + ".mp3")
+    return f if os.path.exists(f) else os.path.join(pdir, cue["file"])
 
 
 def cmd_words(pdir):
@@ -183,9 +237,10 @@ def cmd_check(pdir):
         warns.append(f"voice ends {prev_end:.2f}s; leave >= 2s for the end card to breathe")
     if prev_end is not None and dur - prev_end > 8.0:
         warns.append(f"voice ends {prev_end:.2f}s; {dur - prev_end:.1f}s of silence before the end - consider a longer last line")
+    beats = load_beats(pdir)
     for cue in tl.get("sfx", []):
         try:
-            t = resolve_at(cue["at"], tl, voices, words) + float(cue.get("offset", 0))
+            t = sfx_time(cue, tl, voices, words, beats, pdir)
             if not (0 <= t < dur):
                 fails.append(f"sfx {cue['file']} at {t:.2f}s is outside 0..{dur}")
             if not os.path.exists(os.path.join(pdir, "assets", "sfx", cue["file"] + ".mp3")) and not os.path.exists(os.path.join(pdir, cue["file"])):
@@ -209,6 +264,15 @@ def cmd_check(pdir):
             warns.append(f"{len(accent_scenes)} accent scenes ({', '.join(accent_scenes)}): keep the accent "
                          "background for 1-2 big moments, or it stops being an accent")
     warns += voice_vs_script(pdir, tl, voices)
+    if beats and tl.get("music"):
+        off = []
+        for a in sc[1:]:
+            b = nearest_beat(float(a["in"]), beats["beats"])
+            if b is not None and abs(b - float(a["in"])) > 0.12:
+                off.append(f"{a['id']} {float(a['in']):.2f}s (beat at {b:.2f}s)")
+        if off:
+            warns.append(f"{len(off)} scene cut(s) off the beat: {', '.join(off)}. "
+                         "`timeline.py snap` moves them onto the beat where the voice timing allows")
     for w in warns:
         print("WARN", w)
     for f in fails:
@@ -227,6 +291,9 @@ def cmd_emit(pdir):
         wipes.append({"t": round(float(s["in"]) - WIPE_LEAD, 3), "into": s["id"], "bg": s.get("bg", "light")})
     T = {"scenes": sc, "words": {vid: [[w[0], w[1]] for w in ws] for vid, ws in words.items()}, "wipes": wipes,
          "duration": tl["duration"]}
+    beats = load_beats(pdir)
+    if beats:  # BEAT(n), DOWNBEAT(n), nearBeat(t) and T.drop in scene scripts (templates/kit.jsx)
+        T.update({"bpm": beats["bpm"], "beats": beats["beats"], "downbeats": beats["downbeats"], "drop": beats["drop"]})
     os.makedirs(os.path.join(pdir, "scripts"), exist_ok=True)
     with open(os.path.join(pdir, "scripts", "timing.jsx"), "w") as f:
         f.write("// GENERATED by timeline.py emit - do not edit by hand.\n")
@@ -249,9 +316,11 @@ def cmd_emit(pdir):
 
 
 def cmd_suggest(pdir):
-    """Pack scenes around the voice lines: lead-in 0.5s, tail 0.8s, scene >= min_scene."""
+    """Pack scenes around the voice lines: lead-in 0.5s, tail 0.8s, scene >= min_scene. With beats.json, every scene
+    ends on a beat, so the cuts land on the music (run `timeline.py beats` before `suggest`)."""
     tl, voices = load(pdir)
     dur = float(tl["duration"])
+    beats = load_beats(pdir)
     t = 0.0
     out = []
     lst = scenes(tl)
@@ -261,8 +330,12 @@ def cmd_suggest(pdir):
         speak = (v["words"][-1][2] if v and v["words"] else (v["dur"] if v else 3.0))
         lead = 0.8 if i == 0 else 0.5
         length = max(float(s.get("min_len", 4.5)), lead + speak + 0.9)
-        out.append({"id": s["id"], "in": round(t, 2), "out": round(t + length, 2), "voice": vid, "voice_at": round(t + lead, 2)})
-        t += length
+        end = t + length
+        if beats:  # plan the cuts ON the beat: end each scene on the first beat after it has had enough time
+            later = [b for b in beats["beats"] if b >= end]
+            end = later[0] if later else end
+        out.append({"id": s["id"], "in": round(t, 2), "out": round(end, 2), "voice": vid, "voice_at": round(t + lead, 2)})
+        t = end
     spare = dur - t
     print(f"total planned {t:.2f}s of {dur}s ({'+' if spare >= 0 else ''}{spare:.2f}s spare -> "
           f"{'add to the end card / hero beats' if spare >= 0 else 'TOO LONG: shorten lines or raise duration'})")
@@ -290,12 +363,10 @@ def cmd_mix(pdir):
     split = ",asplit=2[vo][vokey]" if music else "[vo]"  # the key feeds the music ducker only
     fc.append("".join(vl) + f"amix=inputs={len(vl)}:normalize=0,apad=whole_dur={dur},atrim=0:{dur}{split}")
     xl = []
+    beats = load_beats(pdir)
     for cue in tl.get("sfx", []):
-        t = resolve_at(cue["at"], tl, voices, words) + float(cue.get("offset", 0))
-        f = os.path.join(pdir, "assets", "sfx", cue["file"] + ".mp3")
-        if not os.path.exists(f):
-            f = os.path.join(pdir, cue["file"])
-        args += ["-i", f]
+        t = sfx_time(cue, tl, voices, words, beats, pdir)
+        args += ["-i", sfx_path(cue, pdir)]
         ms = int(max(0, t) * 1000)
         mx = cue.get("max")
         trim = f"atrim=0:{mx},afade=t=out:st={float(mx) - 0.3}:d=0.3," if mx else ""
@@ -320,13 +391,65 @@ def cmd_mix(pdir):
     subprocess.run(args, check=True)
     print(f"mixed {out}: {len(vl)} voice lines, {len(xl)} sfx, music={'yes' if music else 'no'}")
     for cue in tl.get("sfx", []):
-        t = resolve_at(cue["at"], tl, voices, words) + float(cue.get("offset", 0))
-        print(f"  {t:6.2f}s  {cue['file']}  ({cue['at']})")
+        t = sfx_time(cue, tl, voices, words, beats, pdir)
+        peak = "  peak-aligned" if cue.get("align") == "peak" else ""
+        print(f"  {t:6.2f}s  {cue['file']}  ({cue['at']}){peak}")
+
+
+def cmd_beats(pdir):
+    """Analyse the music bed: tempo, beats, bar starts, drop -> beats.json in TIMELINE time (music "start" applied)."""
+    import beats as beat_analysis
+    tl, _ = load(pdir)
+    music = tl.get("music")
+    if not music:
+        raise SystemExit('no "music" in timeline.json')
+    found = beat_analysis.analyse(os.path.join(pdir, music["file"]))
+    start, dur = float(music.get("start", 0)), float(tl["duration"])
+    on_timeline = lambda times: [round(t - start, 3) for t in times if 0 <= t - start <= dur]
+    out = {"source": music["file"], "bpm": found["bpm"], "beats": on_timeline(found["beats"]),
+           "downbeats": on_timeline(found["downbeats"]),
+           "drop": round(found["drop"] - start, 3) if found["drop"] is not None and 0 <= found["drop"] - start <= dur else None}
+    json.dump(out, open(os.path.join(pdir, "beats.json"), "w"), indent=1)
+    print(f"beats.json: {out['bpm']} BPM, {len(out['beats'])} beats and {len(out['downbeats'])} bar starts on the timeline, "
+          f"drop {out['drop'] if out['drop'] is not None else 'none found'}")
+    print("scene cuts vs the nearest beat:")
+    for a in scenes(tl)[1:]:
+        b = nearest_beat(float(a["in"]), out["beats"])
+        print(f"  {a['id']:4s} {float(a['in']):6.2f}s  nearest beat {b:6.2f}s  ({b - float(a['in']):+.2f}s)")
+    print("Next: timeline.py snap (cuts onto beats), then check / emit / mix. In scenes: BEAT(n), DOWNBEAT(n), nearBeat(t).")
+
+
+def cmd_snap(pdir):
+    """Move each scene cut to the nearest beat (within 0.4 s) when the voice rules still hold on both sides:
+    the previous scene's last word ends >= 0.2 s before the cut, the next voice starts >= 0.25 s after it."""
+    tl, voices = load(pdir)
+    beats = load_beats(pdir)
+    if not beats:
+        raise SystemExit("no beats.json: run timeline.py beats first")
+    words = abs_words(tl, voices)
+    sc = scenes(tl)
+    moved = []
+    for i in range(1, len(sc)):
+        prev, cur = sc[i - 1], sc[i]
+        cut = float(cur["in"])
+        b = nearest_beat(cut, beats["beats"])
+        if b is None or abs(b - cut) < 0.02 or abs(b - cut) > 0.4:
+            continue
+        prev_words = words.get(prev.get("voice"), [])
+        speech_end = prev_words[-1][2] if prev_words else float(prev["in"])
+        next_at = float(cur["voice_at"]) if cur.get("voice_at") is not None else b + 1
+        if b >= speech_end + 0.2 and b <= next_at - 0.25 and b - float(prev["in"]) >= 1.0:
+            prev["out"] = cur["in"] = round(b, 3)
+            moved.append(f"{cur['id']} {cut:.2f} -> {b:.2f}s")
+    json.dump(tl, open(os.path.join(pdir, "timeline.json"), "w"), indent=2)
+    print(f"snapped {len(moved)} cut(s) onto the beat" + (": " + ", ".join(moved) if moved else ""))
+    print("Next: timeline.py check, emit, mix (and rebuild the scenes).")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] not in ("words", "check", "emit", "mix", "suggest"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("words", "check", "emit", "mix", "suggest", "beats", "snap"):
         print(__doc__)
         sys.exit(2)
     pdir = sys.argv[2] if len(sys.argv) > 2 else "."
-    {"words": cmd_words, "check": cmd_check, "emit": cmd_emit, "mix": cmd_mix, "suggest": cmd_suggest}[sys.argv[1]](pdir)
+    {"words": cmd_words, "check": cmd_check, "emit": cmd_emit, "mix": cmd_mix, "suggest": cmd_suggest,
+     "beats": cmd_beats, "snap": cmd_snap}[sys.argv[1]](pdir)

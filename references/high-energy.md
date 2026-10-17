@@ -41,7 +41,9 @@ slams onto the screen. Tested end to end on `~/Videos/akdavid-hype` (24 s, 1080Ã
    "high energy hype trap beat with bass drops, modern tech promo". Useful SFX names: bass impact,
    glitch, fast whoosh, phone pop, digital glitch, camera shutter, record scratch, boom, riser,
    typing, cinematic boom, sparkle.
-6. SFX cues: a whoosh on every `wipe:sN`, an impact on each scene's key word, a riser that ends
+6. Beat grid: `timeline.py beats` before `suggest` (set a short `min_len` per scene), so cuts land on beats;
+   put the biggest slam on `T.drop`. SFX cues: a whoosh on every `wipe:sN`, an impact on each scene's key word
+   (`"align": "peak"` on impacts), a riser that ends
    on the name, a big boom on the name. Trim long files with `"max"` (typing is 44 s!).
    Music louder than in a brand film: `"music": {"vol": 0.85}`, `"voice_volume": 1.7`.
 7. Write each scene with `hyperStart(sid)` + `heroText()` + `slam / whipIn / riseIn / punches /

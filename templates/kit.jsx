@@ -14,6 +14,26 @@ function P(kind) {
 }
 function bgColor(kind) { return P(kind).bg; }
 
+// Beat grid (from `timeline.py beats` + emit). BEAT(8) = time of the 8th beat (1-based), DOWNBEAT(3) = the 3rd bar
+// start, nearBeat(t) = the beat closest to t, T.drop = the drop (or null). Land cuts, slams and pops ON these:
+// motion that hits the music's beat feels intentional; motion 0.1 s off it feels sloppy.
+function BEAT(n) {
+  if (typeof T === "undefined" || !T.beats) throw new Error("No beat grid: run timeline.py beats, then timeline.py emit");
+  if (n < 1 || n > T.beats.length) throw new Error("BEAT(" + n + "): the music has " + T.beats.length + " beats on the timeline");
+  return T.beats[n - 1];
+}
+function DOWNBEAT(n) {
+  if (typeof T === "undefined" || !T.downbeats) throw new Error("No beat grid: run timeline.py beats, then timeline.py emit");
+  if (n < 1 || n > T.downbeats.length) throw new Error("DOWNBEAT(" + n + "): the music has " + T.downbeats.length + " bar starts");
+  return T.downbeats[n - 1];
+}
+function nearBeat(t) {
+  if (typeof T === "undefined" || !T.beats || !T.beats.length) return t; // no grid: leave the time alone
+  var best = T.beats[0];
+  for (var i = 1; i < T.beats.length; i++) if (Math.abs(T.beats[i] - t) < Math.abs(best - t)) best = T.beats[i];
+  return best;
+}
+
 // Time spec -> seconds. 12.3 | "word" | "word#2" (2nd occurrence) | "word+0.3" | "in+0.2" | "voice"
 function AT(sid, spec) {
   if (typeof spec == "number") return spec;
