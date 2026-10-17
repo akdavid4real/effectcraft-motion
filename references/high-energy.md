@@ -7,7 +7,8 @@ slams onto the screen. Tested end to end on `~/Videos/akdavid-hype` (24 s, 1080Ã
 
 ## What makes it read as "high energy"
 
-- **One phrase per scene, 1.5â€“3 s each.** `timeline.py check` warns "scene only 1.6s long":
+- **One phrase per scene, 1.5â€“3 s each.** Set `"min_read": 0.5` in timeline.json; the last word of a scene
+  still needs 0.5 s fully on screen before the transition covers it. `timeline.py check` warns "scene only 1.6s long":
   that warning is expected in this style. Keep `voice_gap_min` and the spill-over rules.
 - **Every word lands on its spoken time** (`W()`), as giant condensed caps (the `poster` look,
   Anton), stacked and centred. The "100% centred" QA warning is expected here.
@@ -31,8 +32,11 @@ slams onto the screen. Tested end to end on `~/Videos/akdavid-hype` (24 s, 1080Ã
 2. `ec.py look poster --accent HEX` (red FF2D2D on near-black worked well).
 3. Script: 8 short lines, about 45 words for 24 s. Questions and one-word punches work best.
 4. Voice: Kokoro male `am_michael` at `-s 1.08` sounds like a hype ad
-   (`HYPERFRAMES_PYTHON=~/.venvs/kokoro/bin/python`). Word timestamps: Groq
-   (`~/.config/groq/api_key`, model `whisper-large-v3-turbo`, 1â€“2 s for all lines) or Parakeet.
+   (`HYPERFRAMES_PYTHON=~/.venvs/kokoro/bin/python`). Better and still free: Microsoft's
+   `en-GB-RyanNeural` through edge-tts (`~/.local/bin/edge-tts --voice en-GB-RyanNeural --rate=+8%`),
+   which the client preferred; trim its leading/trailing silence. Word timestamps: Groq
+   (`~/.config/groq/api_key`, model **`whisper-large-v3`**, not turbo: turbo skips words) or Parakeet.
+   Then READ the transcript: `timeline.py check` warns when the voice doesn't say a brand word.
 5. Music + SFX: the media-use engine with `--only bgm,sfx`. Query for the bed, e.g.
    "high energy hype trap beat with bass drops, modern tech promo". Useful SFX names: bass impact,
    glitch, fast whoosh, phone pop, digital glitch, camera shutter, record scratch, boom, riser,

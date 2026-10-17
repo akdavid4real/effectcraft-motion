@@ -155,6 +155,39 @@
       "s before its scene cuts. Fine if replaced on purpose; a BUG if it is a final number/headline.");
   }
 
+  // 4b. Text that is never readable for long enough: fully visible (opacity >= 80) for under MIN_READ s (timeline.json
+  // "min_read", default 0.8; ~0.5 for the high-energy style) before the next
+  // wipe starts covering it, or before it dims. Seen on a brand film: a headline and a diagram label that appeared
+  // 0.3 s before the cut, and three promises dimmed half a second after the last one appeared. Every element passed
+  // the other checks because it technically existed on screen.
+  var wipeStarts = [];
+  for (var ws = 0; ws < cuts.length; ws++) wipeStarts.push(cuts[ws] - 0.42);
+  var brief = {};
+  for (var r = 0; r < layers.length; r++) {
+    var T2 = layers[r];
+    if (T2.k != "text") continue;
+    var px = 0;
+    try {
+      px = T2.l.property("ADBE Text Properties").property("ADBE Text Document").value.fontSize * (1080 / Math.min(c.width, c.height));
+    } catch (e7) {}
+    if (px < 30) continue; // small labels and footers
+    var readable = 0, firstFull = -1;
+    for (var tr2 = T2.inP; tr2 < Math.min(T2.outP, DUR); tr2 += STEP) {
+      var covered = false;
+      for (var w2 = 0; w2 < wipeStarts.length; w2++) if (tr2 >= wipeStarts[w2] && tr2 < cuts[w2]) covered = true;
+      if (!covered && visible(T2, tr2, 80)) {
+        readable += STEP;
+        if (firstFull < 0) firstFull = tr2;
+      }
+    }
+    var minRead = typeof MIN_READ !== "undefined" ? MIN_READ : 0.8; // timeline.json "min_read"
+    if (firstFull >= 0 && readable < minRead) brief[T2.name] = { t: firstFull, s: readable };
+  }
+  for (var bn in brief) {
+    WARN("text '" + bn + "' is fully readable for only ~" + f2(brief[bn].s) + "s (from " + f2(brief[bn].t) +
+      "s). Viewers need about 1 s per short line: reveal it earlier, give the scene more time, or cut the element.");
+  }
+
   // 5. Overlapping text, tiny text, text outside the safe area (sampled every 0.25s).
   var pairs = {}, tiny = {}, unsafe = {};
   for (var ts = 0; ts < DUR; ts += 0.25) {

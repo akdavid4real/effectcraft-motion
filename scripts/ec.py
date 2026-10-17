@@ -222,6 +222,8 @@ def cmd_qa(c, a):
     brand["accent_spans"] = [[float(s["in"]), float(s["out"])]
                              for s in c["tl"].get("scenes", []) if s.get("bg") == "accent"]
     brand_js = "var BRAND = " + json.dumps(brand) + ";\n"
+    # seconds each line must be fully readable: 0.8 for brand films, ~0.5 for the high-energy style
+    brand_js += "var MIN_READ = " + str(float(c["tl"].get("min_read", 0.8))) + ";\n"
     res = run_js(c, brand_js + read(os.path.join(KIT, "qa_comp.jsx")), "qa", with_lib=uses_kit, save=False)
     if "QA RESULT: 0 fail" not in res:
         sys.exit(1)

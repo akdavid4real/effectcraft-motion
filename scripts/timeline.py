@@ -95,6 +95,38 @@ def cmd_words(pdir):
         print(f"{vid}: " + "  ".join(f"{raw}@{s:.2f}" for _, s, _, raw in ws))
 
 
+def letters(text):
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def voice_vs_script(pdir, tl, voices):
+    """Compare what each voice line really says (its transcript) with the script in audio_request.json.
+    Seen on a brand film: the script said "BridgeAxis Technologies", the voice said (and two transcription models
+    heard) "Bridge Access Technologies", and nobody noticed because the transcript was never read."""
+    path = os.path.join(pdir, "audio_request.json")
+    if not os.path.exists(path):
+        return []
+    script = {line["id"]: line.get("text", "") for line in json.load(open(path)).get("lines", [])}
+    brand = tl.get("brand", {})
+    terms = [t for t in [brand.get("name", "")] + brand.get("words", []) if t]
+    warns = []
+    for vid, text in script.items():
+        if vid not in voices or not voices[vid]["words"]:
+            continue
+        heard = " ".join(w[0] for w in voices[vid]["words"])
+        for term in terms:
+            if letters(term) and letters(term) in letters(text) and letters(term) not in letters(heard):
+                warns.append(f"voice {vid}: the script says '{term}' but the voice was heard as \"{heard}\". "
+                             "Listen to it: if the voice mispronounces the name, spell it the way it should sound "
+                             "in the TTS text (e.g. 'Bridge Axis') and regenerate the line")
+        said = [letters(w) for w in text.split() if letters(w)]
+        got = set(letters(w[0]) for w in voices[vid]["words"])
+        if said and sum(1 for w in said if w in got) / len(said) < 0.75:
+            warns.append(f"voice {vid}: only part of the script is in the transcript (script: \"{text}\", "
+                         f"heard: \"{heard}\"). Listen to the line before building on it")
+    return warns
+
+
 def cmd_check(pdir):
     tl, voices = load(pdir)
     dur = float(tl["duration"])
@@ -176,6 +208,7 @@ def cmd_check(pdir):
         if len(accent_scenes) > 2:
             warns.append(f"{len(accent_scenes)} accent scenes ({', '.join(accent_scenes)}): keep the accent "
                          "background for 1-2 big moments, or it stops being an accent")
+    warns += voice_vs_script(pdir, tl, voices)
     for w in warns:
         print("WARN", w)
     for f in fails:

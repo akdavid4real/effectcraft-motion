@@ -40,6 +40,15 @@ MCP is optional. Kit location: the folder containing this file (call it `$KIT`).
    rendering (`references/design-review.md`, compared with `references/benchmark_sheet.png`).
 8. **High-energy / hyper-kinetic ads** (TikTok-style, a slam on every spoken word): follow
    `references/high-energy.md` and `templates/hyper.jsx` instead of the calm layouts.
+9. **Report what the render shows, not what you planned.** Before writing the report or handoff, pull frames
+   from the final MP4 (not the preview) at each scene's middle and last half-second, and check every claim:
+   is each line on screen long enough to read, is every drawn step really visible, is the screenshot legible,
+   does the length match the brief and the file name? Read every voice transcript against the script, and
+   listen to the brand name. In testing, an agent's handoff described four diagram steps, three promises and
+   "BridgeAxis Technologies"; the film showed the last step 0.3 s before the cut, the promises for half a
+   second, unreadable screenshots, and a voice saying "Bridge Access". `timeline.py check` and `ec.py qa` now
+   warn about unread voice mistakes and text readable for under `min_read` seconds: fix those warnings, don't
+   explain them away. Run on the highest reasoning setting your agent has: the sloppy run was on a "Low" one.
 
 ## Project layout
 
