@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""EffectCraft kit CLI: every step an agent needs, headless, via effectcraft-cli.
+
+Run from the PROJECT directory (the one containing timeline.json and scripts/).
+
+  ec.py new                         create an empty .ecproj (path from timeline.json "project")
+  ec.py import FILE...              import footage/audio/images into the project
+  ec.py run NAME...                 run scripts/NAME.jsx (lib.jsx + timing.jsx loaded first), save
+  ec.py rebuild NAME                clear that scene's time range, re-run it, then re-run wipes
+  ec.py layers [FILTER]             list layers (index, name, in, out)
+  ec.py frames T... [--side 960]    render preview PNGs at times T (seconds) + a contact sheet
+  ec.py sheet [--every 2]           contact sheet of the whole comp (one frame every N s)
+  ec.py qa                          composition QA (dead frames, overlaps, vanishing text, order...)
+  ec.py render [--bitrate 16000]    render the MP4 (H.264 + audio), then run qa-video
+  ec.py qa-video [FILE.mp4]         check the render: specs, loudness, empty frames, contact sheet
+  ec.py look [list | NAME [--accent HEX]]   list the looks, or apply one (writes scripts/look.jsx)
+  ec.py compare LOOK_A LOOK_B [--accent HEX]  build the whole video in both looks (copies) -> qa/look_compare.png
+  ec.py fonts                       install the kit's fonts (needed once per machine)
+
+Never edit the same .ecproj in the GUI and with this tool at the same time: the GUI keeps its
+own copy in memory and will overwrite this tool's changes when it saves.
+"""
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+KIT = os.path.dirname(os.path.abspath(__file__))
+CLI = os.environ.get("EFFECTCRAFT_CLI", "effectcraft-cli")
+
+
+def cfg():
+    tl = {}
+    if os.path.exists("timeline.json"):
+        tl = json.load(open("timeline.json"))
+    project = tl.get("project") or (glob.glob("*.ecproj") or [None])[0]
+    if not project:
+        sys.exit("No project: set \"project\" in timeline.json or run from a folder with one .ecproj")
+    return {"project": project, "comp": tl.get("comp", "Promo"), "duration": float(tl.get("duration", 60)),
+            "tl": tl, "out": tl.get("output", os.path.splitext(project)[0] + ".mp4")}
+
+
+def sh(args, check=True, quiet=False):
+    r = subprocess.run(args, capture_output=True, text=True)
+    if not quiet:
+        txt = (r.stdout + r.stderr).strip()
+        if txt:
+            print(txt)
+    if check and r.returncode != 0:
+        sys.exit(f"command failed ({r.returncode}): {' '.join(args[:3])} ...")
+    return r
+
+
+def read(p):
+    return open(p).read()
+
+
+def prelude(c, with_lib=True):
+    parts = []
+    if with_lib:
+        lib = "scripts/lib.jsx" if os.path.exists("scripts/lib.jsx") else os.path.join(KIT, "..", "templates", "lib.jsx")
+        parts.append(read(lib))
+    else:  # minimal helpers for QA on projects that do not use this kit's lib.jsx
+        parts.append('function findItem(n){for(var i=1;i<=app.project.numItems;i++)if(app.project.item(i).name==n)return app.project.item(i);return null;}'
+                     'function comp(){var c=findItem(COMP);if(!c)throw new Error("Comp not found: "+COMP);return c;}'
+                     'function tr(l,n){return l.property("ADBE Transform Group").property(n);}')
+    parts.append(f'COMP = {json.dumps(c["comp"])};' if with_lib else f'var COMP = {json.dumps(c["comp"])};')
+    if with_lib:
+        parts.append(read(os.path.join(KIT, "..", "templates", "kit.jsx")))
+        look = c.get("look_file") or ("scripts/look.jsx" if os.path.exists("scripts/look.jsx") else None)
+        if look:
+            parts.append(read(look))
+        lay = "scripts/layouts.jsx" if os.path.exists("scripts/layouts.jsx") else os.path.join(KIT, "..", "templates", "layouts.jsx")
+        parts.append(read(lay))
+    if os.path.exists("scripts/timing.jsx"):
+        parts.append(read("scripts/timing.jsx"))
+    return "\n".join(parts)
+
+
+def run_js(c, body, label, with_lib=True, save=True):
+    code = prelude(c, with_lib) + "\n" + body
+    wrapper = ("var __r; try { __r = eval(" + json.dumps(code) + "); } catch (e) { __r = 'ERR ' + e + ' @line ' + e.line; } __r;")
+    with tempfile.NamedTemporaryFile("w", suffix=".jsx", delete=False) as f:
+        f.write(wrapper)
+        tmp = f.name
+    args = [CLI, "script", tmp, c["project"]] + (["--save"] if save else [])
+    r = subprocess.run(args, capture_output=True, text=True)
+    os.unlink(tmp)
+    res = (r.stdout + r.stderr).strip()
+    res = re.sub(r"\n?saved .*$", "", res)
+    if res.startswith('"') and res.endswith('"'):
+        try:
+            res = json.loads(res)
+        except ValueError:
+            pass
+    ok = r.returncode == 0 and "ERR " not in res
+    print(f"[{label}] {'ok' if ok else 'ERROR'}:" + ("\n" if "\n" in str(res) else " ") + str(res))
+    if not ok:
+        sys.exit(1)
+    return res
+
+
+def gui_warning(c):
+    r = subprocess.run(["pgrep", "-fa", "effectcraft --control"], capture_output=True, text=True)
+    if r.stdout.strip():
+        print("NOTE: the EffectCraft GUI is running. Make sure it does NOT have " + c["project"] +
+              " open, or its next save will overwrite these changes.", file=sys.stderr)
+
+
+def cmd_new(c, a):
+    if os.path.exists(c["project"]):
+        sys.exit(f"{c['project']} already exists (delete it first to start over)")
+    with tempfile.NamedTemporaryFile("w", suffix=".jsx", delete=False) as f:
+        f.write("0;")
+    sh([CLI, "script", f.name, "--empty", "--save-as", os.path.abspath(c["project"])])
+
+
+def cmd_import(c, files):
+    body = "var out=[];\n"
+    for p in files:
+        ap = os.path.abspath(p)
+        body += (f'(function(){{var n={json.dumps(os.path.basename(p))}; if(findItem(n)){{out.push("have "+n);return;}}'
+                 f'var f=new File({json.dumps(ap)}); if(!f.exists){{out.push("MISSING "+n);return;}}'
+                 f'app.project.importFile(new ImportOptions(f)); out.push("imported "+n);}})();\n')
+    body += 'out.join(", ");'
+    run_js(c, body, "import")
+
+
+def cmd_run(c, names):
+    gui_warning(c)
+    for n in names:
+        p = f"scripts/{n}.jsx" if not n.endswith(".jsx") else n
+        if not os.path.exists(p):
+            sys.exit(f"missing {p}")
+        run_js(c, read(p), n)
+
+
+def scene_range(c, name):
+    sc = c["tl"].get("scenes", [])
+    for s in sc:
+        if s["id"] == name:
+            return float(s["in"]), float(s["out"])
+    sys.exit(f"scene {name} not in timeline.json")
+
+
+def cmd_rebuild(c, a):
+    name = a[0]
+    t0, t1 = scene_range(c, name)
+    run_js(c, f"'cleared ' + clearRange(comp(), {t0}, {t1}) + ' layers';", f"clear {name}")
+    cmd_run(c, [name])
+    if os.path.exists("scripts/wipes.jsx"):
+        cmd_run(c, ["wipes"])
+
+
+def cmd_layers(c, a):
+    flt = a[0] if a else ""
+    run_js(c, "var c=comp(),o=[];for(var i=1;i<=c.numLayers;i++){var l=c.layer(i);"
+              f"if(l.name.indexOf({json.dumps(flt)})<0)continue;"
+              "o.push(i+'  '+l.name+'  ['+Math.round(l.inPoint*100)/100+' - '+Math.round(l.outPoint*100)/100+']');}"
+              "o.join('\\n');", "layers", save=False)
+
+
+def frame(c, t, out, side):
+    sh([CLI, "render-frame", "--project", c["project"], "--comp", c["comp"], "--time", str(t),
+        "--max-side", str(side), "--out", out], quiet=True)
+
+
+def montage(files, out, cols=5):
+    sh(["magick", "montage"] + files + ["-tile", f"{cols}x", "-geometry", "+3+3", "-background", "#777", out], quiet=True)
+
+
+def stamp(png, label):
+    sh(["magick", png, "-gravity", "NorthWest", "-fill", "yellow", "-undercolor", "#000000A0",
+        "-pointsize", "18", "-annotate", "+6+6", label, png], quiet=True)
+
+
+def cmd_frames(c, a):
+    side = 960
+    if "--side" in a:
+        i = a.index("--side")
+        side = int(a[i + 1])
+        a = a[:i] + a[i + 2:]
+    os.makedirs("qa", exist_ok=True)
+    files = []
+    for t in a:
+        out = f"qa/frame_{float(t):06.2f}.png"
+        frame(c, float(t), out, side)
+        stamp(out, f"{float(t):.2f}s")
+        files.append(out)
+    if len(files) > 1:
+        montage(files, "qa/frames.png", cols=min(3, len(files)))
+        print("contact sheet: qa/frames.png")
+    print("frames: " + " ".join(files) + "\nLOOK at these images before moving on.")
+
+
+def cmd_sheet(c, a):
+    every = float(a[a.index("--every") + 1]) if "--every" in a else 2.0
+    os.makedirs("qa/sheet", exist_ok=True)
+    files, t = [], 0.5
+    while t < c["duration"]:
+        out = f"qa/sheet/{t:06.2f}.png"
+        frame(c, t, out, 400)
+        stamp(out, f"{t:.1f}s")
+        files.append(out)
+        t += every
+    half = (len(files) + 1) // 2
+    montage(files[:half], "qa/sheet_1.png")
+    montage(files[half:], "qa/sheet_2.png")
+    print("contact sheets: qa/sheet_1.png qa/sheet_2.png  (open and LOOK at every frame)")
+
+
+def cmd_qa(c, a):
+    uses_kit = os.path.exists("scripts/lib.jsx") and "function W(" in read("scripts/lib.jsx")
+    if uses_kit and not os.path.exists("scripts/look.jsx"):
+        print("WARN no look applied: pick one (`ec.py look list`, references/looks.md) and compare two with `ec.py compare A B`. "
+              "Inventing a style from scratch is where generated videos go wrong.")
+    # The brand facts and the accent scenes go to qa_comp.jsx as one BRAND object.
+    brand = dict(c["tl"].get("brand", {}))
+    brand["accent_spans"] = [[float(s["in"]), float(s["out"])]
+                             for s in c["tl"].get("scenes", []) if s.get("bg") == "accent"]
+    brand_js = "var BRAND = " + json.dumps(brand) + ";\n"
+    res = run_js(c, brand_js + read(os.path.join(KIT, "qa_comp.jsx")), "qa", with_lib=uses_kit, save=False)
+    if "QA RESULT: 0 fail" not in res:
+        sys.exit(1)
+
+
+def cmd_render(c, a):
+    br = a[a.index("--bitrate") + 1] if "--bitrate" in a else "16000"
+    gui_warning(c)
+    print(f"rendering {c['out']} (CPU, ~5-10 min for 60s)...", flush=True)
+    sh([CLI, "render", "--project", c["project"], "--comp", c["comp"], "--out", c["out"], "--format", "h264",
+        "--bitrate", br, "--audio", "on", "--quality", "best"])
+    cmd_qa_video(c, [c["out"]])
+
+
+def cmd_qa_video(c, a):
+    f = a[0] if a else c["out"]
+    fails, warns = [], []
+    pr = json.loads(sh(["ffprobe", "-v", "error", "-show_entries", "format=duration,bit_rate:stream=codec_type,width,height,r_frame_rate",
+                        "-of", "json", f], quiet=True).stdout)
+    dur = float(pr["format"]["duration"])
+    vs = [s for s in pr["streams"] if s["codec_type"] == "video"]
+    au = [s for s in pr["streams"] if s["codec_type"] == "audio"]
+    if abs(dur - c["duration"]) > 0.15:
+        fails.append(f"duration {dur:.2f}s, expected {c['duration']}s (a cut-off render = corrupt/short file)")
+    if not au:
+        fails.append("no audio stream (render with --audio on and a Soundtrack layer)")
+    br = int(pr["format"].get("bit_rate", 0)) / 1e6
+    if br < 3:
+        warns.append(f"bitrate {br:.1f} Mbps: check dark gradients for banding on the contact sheet "
+                     "(the --bitrate value is a ceiling; flat motion graphics legitimately encode lower)")
+    print(f"video: {vs[0]['width']}x{vs[0]['height']} @ {vs[0]['r_frame_rate']}, {dur:.2f}s, {br:.1f} Mbps, audio: {'yes' if au else 'NO'}")
+    if au:
+        ln = sh(["ffmpeg", "-hide_banner", "-i", f, "-vn", "-af", "loudnorm=print_format=summary", "-f", "null", "-"],
+                check=False, quiet=True).stderr
+        m1 = re.search(r"Input Integrated:\s+(-?[\d.]+)", ln)
+        m2 = re.search(r"Input True Peak:\s+([+-]?[\d.]+)", ln)
+        if m1:
+            lufs, tp = float(m1.group(1)), float(m2.group(1))
+            print(f"loudness: {lufs} LUFS, true peak {tp} dBTP")
+            if not -16.5 <= lufs <= -11.5:
+                warns.append(f"loudness {lufs} LUFS (aim for about -14)")
+            if tp > -0.5:
+                warns.append(f"true peak {tp} dBTP (keep below -1)")
+    # Empty-frame detection: edge energy per frame (5 fps). Background-only frames have almost no edges.
+    st = sh(["ffmpeg", "-hide_banner", "-i", f, "-vf", "fps=5,scale=480:-1,edgedetect=low=0.08:high=0.2,signalstats,"
+             "metadata=print:key=lavfi.signalstats.YAVG", "-an", "-f", "null", "-"], check=False, quiet=True).stderr
+    vals = [float(x) for x in re.findall(r"YAVG=([\d.]+)", st)]
+    if vals:
+        srt = sorted(vals)
+        ref = srt[int(len(srt) * 0.6)]
+        thr = max(0.35, ref * 0.12)
+        # wipes are flat colour (no edges) by design: ignore the frames around each scene cut
+        cuts = [float(s_["in"]) for s_ in c["tl"].get("scenes", [])[1:]]
+        in_wipe = lambda t: any(cu - 0.5 <= t <= cu + 0.55 for cu in cuts)
+        run = None
+        for i, v in enumerate(vals + [999]):
+            t = i / 5.0
+            if v < thr and 0.8 < t < dur - 1.2 and not in_wipe(t):
+                run = run if run is not None else t
+            else:
+                if run is not None and t - run >= 0.4:
+                    warns.append(f"near-empty frames {run:.1f}-{t:.1f}s: check the contact sheet "
+                                 f"({'wipe frames are expected; ' if not cuts else ''}`ec.py qa` is the precise check)")
+                run = None
+    # contact sheet
+    os.makedirs("qa", exist_ok=True)
+    sh(["ffmpeg", "-v", "error", "-y", "-i", f, "-vf",
+        "fps=1/2,scale=384:-1,drawtext=text='%{pts\\:hms}':x=6:y=6:fontsize=16:fontcolor=yellow:box=1:boxcolor=black@0.6,tile=5x6",
+        "-frames:v", "1", "qa/render_sheet.png"], quiet=True)
+    for w in warns:
+        print("WARN", w)
+    for x in fails:
+        print("FAIL", x)
+    print(f"qa-video: {len(fails)} fail, {len(warns)} warn. Contact sheet: qa/render_sheet.png (LOOK at it).")
+    if fails:
+        sys.exit(1)
+
+
+LOOKS = os.path.join(KIT, "..", "looks")
+FONTS = os.path.join(KIT, "..", "fonts")
+
+
+def cmd_fonts(c=None, a=None):
+    dst = os.path.expanduser("~/.local/share/fonts/effectcraft-kit")
+    os.makedirs(dst, exist_ok=True)
+    have = set(os.listdir(dst))
+    new = [f for f in os.listdir(FONTS) if f.endswith(".ttf") and f not in have
+           and not os.path.exists(os.path.expanduser("~/.local/share/fonts/halden/" + f))]
+    for f in new:
+        subprocess.run(["cp", os.path.join(FONTS, f), dst])
+    if new:
+        subprocess.run(["fc-cache", "-f"], capture_output=True)
+    print(f"fonts: {len(new)} installed" if new else "fonts: all installed")
+
+
+def look_names():
+    return sorted(f[:-4] for f in os.listdir(LOOKS) if f.endswith(".jsx"))
+
+
+def apply_look(name, accent, dst):
+    src = os.path.join(LOOKS, name + ".jsx")
+    if not os.path.exists(src):
+        sys.exit(f"no look '{name}'. Looks: {', '.join(look_names())}")
+    code = read(src)
+    if accent:
+        accent = accent.lstrip("#").upper()
+        if not re.fullmatch(r"[0-9A-F]{6}", accent):
+            sys.exit("--accent must be a hex colour like FF5B1F")
+        code = re.sub(r'var ACCENT = "[0-9A-Fa-f]{6}";', f'var ACCENT = "{accent}";', code, count=1)
+    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+    open(dst, "w").write(code)
+
+
+def cmd_look(c, a):
+    if not a or a[0] == "list":
+        for n in look_names():
+            lines = read(os.path.join(LOOKS, n + ".jsx")).splitlines()
+            desc = " ".join(l.lstrip("/ ").strip() for l in lines[:3] if l.startswith("//"))
+            print(f"  {n:10s} {desc.split(' - ', 1)[-1]}")
+        print("Read references/looks.md, shortlist two, then `ec.py compare A B`.")
+        return
+    accent = a[a.index("--accent") + 1] if "--accent" in a else None
+    cmd_fonts()
+    apply_look(a[0], accent, "scripts/look.jsx")
+    print(f"look '{a[0]}' applied -> scripts/look.jsx" + (f" (accent #{accent.lstrip('#')})" if accent else "") +
+          ". Rebuild every scene: ec.py run reset s1 s2 ... wipes")
+
+
+def scene_ids(c):
+    return [s["id"] for s in c["tl"].get("scenes", [])]
+
+
+def cmd_compare(c, a):
+    accent = a[a.index("--accent") + 1] if "--accent" in a else None
+    names = [x for x in a if not x.startswith("--") and x != accent]
+    if len(names) < 2:
+        sys.exit("usage: ec.py compare LOOK_A LOOK_B [LOOK_C] [--accent HEX]")
+    cmd_fonts()
+    ids = [i for i in scene_ids(c) if os.path.exists(f"scripts/{i}.jsx")]
+    if not ids:
+        sys.exit("no scene scripts yet: write scripts/s1.jsx ... (scene() calls) first")
+    times = []
+    for s_ in c["tl"]["scenes"]:
+        if s_["id"] in ids:
+            a0, b0 = float(s_["in"]), float(s_["out"])
+            times.append(round(a0 + (b0 - a0) * 0.8, 2))
+    os.makedirs("qa/compare", exist_ok=True)
+    sheets = []
+    for n in names:
+        proj = f"qa/compare/{n}.ecproj"
+        subprocess.run(["cp", c["project"], proj])
+        cc = dict(c, project=proj, look_file=f"qa/compare/{n}.jsx")
+        apply_look(n, accent, cc["look_file"])
+        print(f"== building {n} ...", flush=True)
+        run_js(cc, read("scripts/reset.jsx") if os.path.exists("scripts/reset.jsx") else
+               "for (var i = app.project.numItems; i >= 1; i--) if (app.project.item(i).name == COMP) app.project.item(i).remove(); 'reset';", "reset")
+        for i in ids:
+            run_js(cc, read(f"scripts/{i}.jsx"), i)
+        if os.path.exists("scripts/wipes.jsx"):
+            run_js(cc, read("scripts/wipes.jsx"), "wipes")
+        files = []
+        for t in times:
+            out = f"qa/compare/{n}_{t:06.2f}.png"
+            frame(cc, t, out, 480)
+            stamp(out, f"{n}  {t:.1f}s")
+            files.append(out)
+        montage(files, f"qa/compare/{n}.png", cols=len(files))
+        sheets.append(f"qa/compare/{n}.png")
+    sh(["magick"] + sheets + ["-append", "qa/look_compare.png"], quiet=True)
+    print("qa/look_compare.png: one row per look, same moments. OPEN it and judge which one fits this brand "
+          "(references/looks.md). Your project was not changed: apply the winner with `ec.py look NAME`.")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(2)
+    cmd, args = sys.argv[1], sys.argv[2:]
+    fn = {"new": cmd_new, "import": cmd_import, "run": cmd_run, "rebuild": cmd_rebuild, "layers": cmd_layers,
+          "frames": cmd_frames, "sheet": cmd_sheet, "qa": cmd_qa, "render": cmd_render, "qa-video": cmd_qa_video,
+          "look": cmd_look, "compare": cmd_compare, "fonts": cmd_fonts}.get(cmd)
+    if not fn:
+        print(__doc__)
+        sys.exit(2)
+    fn(cfg(), args)

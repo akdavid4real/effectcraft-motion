@@ -1,0 +1,31 @@
+{
+  "project": "promo.ecproj",
+  "comp": "Promo",
+  "output": "promo-60s.mp4",
+  "duration": 60,
+  "voice_gap_min": 0.35,
+  "audio_meta": "audio_meta.json",
+  "brand": {
+    "name": "Brandname",
+    "tagline": "The tagline, exactly as the brand writes it!",
+    "logo": ["assets/logo/lockup.png", "assets/logo/mark.png"],
+    "words": ["brandname.com"]
+  },
+  "scenes": [
+    {"id": "s1", "in": 0,     "out": 8.0,   "voice": "s1", "voice_at": 0.8,  "bg": "light"},
+    {"id": "s2", "in": 8.0,   "out": 15.75, "voice": "s2", "voice_at": 8.6,  "bg": "dark"},
+    {"id": "s3", "in": 15.75, "out": 21.3,  "voice": "s3", "voice_at": 16.3, "bg": "light"},
+    {"id": "s8", "in": 21.3,  "out": 60,    "voice": "s8", "voice_at": 21.9, "bg": "dark"}
+  ],
+  "sfx": [
+    {"file": "soft-whoosh", "at": 0.1, "vol": 0.45},
+    {"file": "swoosh", "at": "wipe:s2", "vol": 0.32},
+    {"file": "swoosh", "at": "wipe:s3", "vol": 0.32},
+    {"file": "ui-pop", "at": "s1:promise", "vol": 0.3},
+    {"file": "soft-impact", "at": "s2:late", "offset": 0.05, "vol": 0.55},
+    {"file": "logo-reveal-shimmer", "at": "in:s3", "offset": 0.2, "vol": 0.42},
+    {"file": "counter-tick", "at": "s8:ninety", "vol": 0.22, "max": 4.0}
+  ],
+  "music": {"file": "assets/bgm/bed.wav", "vol": 0.5, "start": 0},
+  "mix": {"voice_volume": 1.6, "lufs": -14}
+}
