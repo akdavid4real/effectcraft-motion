@@ -102,7 +102,8 @@ holds about 110–130 spoken words. Generate one audio file per line and get **w
 ```
 **First run `python3 $KIT/scripts/ec.py doctor`.** It lists what this machine has and how to install
 anything missing. When it says `ready`, don't research or install alternatives (edge-tts, Whisper,
-piper, Playwright): the tools below are the tested ones.
+piper, Playwright): the tools below are the tested ones. With no voice at all, time scenes with
+`"in+0.5"` offsets instead of words; `$KIT/demo/` is a complete silent example (`ec.py demo` renders it).
 
 - **Voice (the default): local Kokoro**, female voice `af_heart`. Free, no account. The model is
   cached in `~/.cache/hyperframes/tts/` (downloaded once on the first run):

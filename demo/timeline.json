@@ -1,0 +1,47 @@
+{
+  "project": "demo.ecproj",
+  "comp": "Demo",
+  "output": "effectcraft-demo.mp4",
+  "duration": 20,
+  "brand": {
+    "name": "Kitelane",
+    "tagline": "Freight, on schedule.",
+    "logo": [],
+    "words": [
+      "kitelane.example"
+    ]
+  },
+  "scenes": [
+    {
+      "id": "s1",
+      "in": 0,
+      "out": 4.0,
+      "bg": "light"
+    },
+    {
+      "id": "s2",
+      "in": 4.0,
+      "out": 8.2,
+      "bg": "dark"
+    },
+    {
+      "id": "s3",
+      "in": 8.2,
+      "out": 12.2,
+      "bg": "light"
+    },
+    {
+      "id": "s4",
+      "in": 12.2,
+      "out": 16.2,
+      "bg": "accent"
+    },
+    {
+      "id": "s5",
+      "in": 16.2,
+      "out": 20,
+      "bg": "light"
+    }
+  ],
+  "sfx": []
+}

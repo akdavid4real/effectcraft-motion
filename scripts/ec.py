@@ -17,6 +17,7 @@ Run from the PROJECT directory (the one containing timeline.json and scripts/).
   ec.py compare LOOK_A LOOK_B [--accent HEX]  build the whole video in both looks (copies) -> qa/look_compare.png
   ec.py fonts                       install the kit's fonts (needed once per machine)
   ec.py doctor                      check this machine has everything the kit needs (and how to get it)
+  ec.py demo [DIR] [--look NAME]    build + render a silent 20 s sample (needs only EffectCraft, ffmpeg, numpy)
 
 Never edit the same .ecproj in the GUI and with this tool at the same time: the GUI keeps its
 own copy in memory and will overwrite this tool's changes when it saves.
@@ -423,6 +424,28 @@ def cmd_compare(c, a):
           "(references/looks.md). Your project was not changed: apply the winner with `ec.py look NAME`.")
 
 
+def cmd_demo(c=None, a=None):
+    """Copy $KIT/demo to DIR (default ./effectcraft-demo), give it a silent soundtrack, build every scene, render."""
+    a = list(a or [])
+    look = a.pop(a.index("--look") + 1) if "--look" in a else "editorial"
+    a = [x for x in a if x != "--look"]
+    dst = os.path.abspath(a[0] if a else "effectcraft-demo")
+    if os.path.exists(dst):
+        sys.exit(f"{dst} already exists: pick another folder")
+    import shutil
+    shutil.copytree(os.path.join(KIT, "..", "demo"), dst)
+    os.chdir(dst)
+    dur = json.load(open("timeline.json"))["duration"]
+    me, tl = [sys.executable, os.path.abspath(__file__)], [sys.executable, os.path.join(KIT, "timeline.py")]
+    steps = [["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", str(dur), "soundtrack.wav"],
+             tl + ["emit"], me + ["new"], me + ["import", "soundtrack.wav"], me + ["look", look, "--accent", "E4572E"],
+             me + ["run", "s1", "s2", "s3", "s4", "s5", "wipes"], me + ["qa"], me + ["render"]]
+    for cmd in steps:
+        if subprocess.run(cmd).returncode != 0:
+            sys.exit(f"demo stopped at: {' '.join(cmd[1:3] if cmd[0] == sys.executable else cmd[:1])}")
+    print(f"demo: {os.path.join(dst, 'effectcraft-demo.mp4')}")
+
+
 def _found(cmd):
     import shutil
     return shutil.which(os.path.expanduser(cmd))
@@ -468,7 +491,8 @@ def cmd_doctor(c=None, a=None):
         tag = "OK  " if ok else ("FAIL" if required else "warn")
         print(f"  {tag}  {name:24}" + ("" if ok else f"  -> {how}"))
         missing += required and not ok
-    print(f"doctor: {missing} required missing." if missing else "doctor: ready.")
+    print(f"doctor: {missing} required missing." if missing else
+          "doctor: ready. Try it: python3 " + os.path.abspath(__file__) + " demo   (a silent 20 s sample, ~7 min on CPU)")
     if missing:
         sys.exit(1)
 
@@ -478,8 +502,8 @@ if __name__ == "__main__":
         print(__doc__)
         sys.exit(2)
     cmd, args = sys.argv[1], sys.argv[2:]
-    if cmd in ("doctor", "fonts"):  # machine-level: no project needed
-        (cmd_doctor if cmd == "doctor" else cmd_fonts)(None, args)
+    if cmd in ("doctor", "fonts", "demo"):  # machine-level: no project needed
+        {"doctor": cmd_doctor, "fonts": cmd_fonts, "demo": cmd_demo}[cmd](None, args)
         sys.exit(0)
     fn = {"new": cmd_new, "import": cmd_import, "run": cmd_run, "rebuild": cmd_rebuild, "layers": cmd_layers,
           "frames": cmd_frames, "sheet": cmd_sheet, "qa": cmd_qa, "render": cmd_render, "qa-video": cmd_qa_video,
