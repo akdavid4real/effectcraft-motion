@@ -39,6 +39,9 @@ MCP is optional. Kit location: the folder containing this file (call it `$KIT`).
 7. **Passing QA is not the same as good design.** Plan the colour script, the visuals and the
    signature moment before writing scenes, and score the film in a creative-director review before
    rendering (`references/design-review.md`, compared with `references/benchmark_sheet.png`).
+7b. **Real product UI** (SaaS, app films): follow `references/ui-footage.md`: capture sample data only, crop to one
+   panel, show it readable (55%+ width) or rebuild it as animated UI, one screen per shot, no tinted walls of
+   thumbnails, no invented numbers, and build here so the QA gates run.
 8. **High-energy / hyper-kinetic ads** (TikTok-style, a slam on every spoken word): follow
    `references/high-energy.md` and `templates/hyper.jsx` instead of the calm layouts.
 9. **Report what the render shows, not what you planned.** Before writing the report or handoff, pull frames

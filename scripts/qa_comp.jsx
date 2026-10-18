@@ -338,6 +338,24 @@
     } catch (e5) {}
   }
 
+  // Screenshots shown too small to read (references/ui-footage.md): an image layer that is not the logo and is
+  // under 45% of the frame width at the middle of its time on screen. Seen in a beat cut: a wall of thumbnails.
+  var logoFiles = {};
+  if (typeof BRAND !== "undefined" && BRAND.logo) for (var lf = 0; lf < BRAND.logo.length; lf++) logoFiles[String(BRAND.logo[lf]).split("/").pop().toLowerCase()] = 1;
+  var smallShots = {};
+  for (var im = 0; im < layers.length; im++) {
+    var Li = layers[im], srcName = "", srcW = 0;
+    try { srcName = String(Li.l.source.name); srcW = Li.l.source.width; } catch (ei) { continue; }
+    if (!/\.(png|jpe?g|webp)$/i.test(srcName) || logoFiles[srcName.toLowerCase()] || !srcW) continue;
+    var mid = (Li.inP + Math.min(Li.outP, DUR)) / 2;
+    if (!visible(Li, mid, 50)) continue;
+    var shownW = srcW * chainScale(Li.l, mid);
+    if (shownW < c.width * 0.45) smallShots[Li.name] = Math.round(shownW / c.width * 100);
+  }
+  for (var sn in smallShots)
+    WARN("image '" + sn + "' is shown at only " + smallShots[sn] + "% of the frame width: UI text in it is unreadable. Crop to " +
+      "the one panel that matters and show it at 55%+ width, or rebuild that screen as animated UI (references/ui-footage.md).");
+
   // Brand fidelity (timeline.json "brand", passed in by ec.py as BRAND). See references/brand.md.
   if (typeof BRAND !== "undefined" && BRAND.name) {
     var lettersOf = function (s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ""); };
