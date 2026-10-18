@@ -100,11 +100,12 @@ holds about 110–130 spoken words. Generate one audio file per line and get **w
 {"voices": [{"id": "s1", "path": "assets/voice/s1.wav", "duration_s": 6.45,
              "words": [{"word": "Every", "start": 0.30, "end": 0.59}, ...]}]}
 ```
-**On this machine, everything below is already installed. Don't research or install
-alternatives (edge-tts, Whisper, piper, Playwright).**
+**First run `python3 $KIT/scripts/ec.py doctor`.** It lists what this machine has and how to install
+anything missing. When it says `ready`, don't research or install alternatives (edge-tts, Whisper,
+piper, Playwright): the tools below are the tested ones.
 
-- **Voice (the default here): local Kokoro**, female voice `af_heart`. The model is cached in
-  `~/.cache/hyperframes/tts/`, so no download and no account:
+- **Voice (the default): local Kokoro**, female voice `af_heart`. Free, no account. The model is
+  cached in `~/.cache/hyperframes/tts/` (downloaded once on the first run):
   ```bash
   export HYPERFRAMES_PYTHON=~/.venvs/kokoro/bin/python   # REQUIRED: the venv with kokoro-onnx
   npx hyperframes tts "Line one text." -v af_heart -o assets/voice/s1.wav   # one file per line
@@ -112,18 +113,19 @@ alternatives (edge-tts, Whisper, piper, Playwright).**
   Without `HYPERFRAMES_PYTHON` it fails with "The kokoro-onnx package is not installed". Don't
   pip-install anything: set the variable.
 - **Word timestamps: `npx hyperframes transcribe assets/voice/s1.wav --json`.** It uses the
-  **Parakeet** model already cached in `~/.cache/hyperframes/parakeet` (engine `auto` picks it).
-  Nothing downloads. Parakeet is right for clean TTS voices like Kokoro. Don't pass `-e whisper`
+  **Parakeet** model, cached in `~/.cache/hyperframes/parakeet` after the first run (engine `auto`
+  picks it). Parakeet is right for clean TTS voices like Kokoro. Don't pass `-e whisper`
   here: hyperframes' Whisper engine (whisper.cpp) is not set up. For real recorded voices with
-  accents, the footage-edit skill uses faster-whisper large-v3-turbo instead (`~/.venvs/asr`,
-  model already downloaded).
+  accents, the footage-edit skill uses faster-whisper large-v3-turbo instead (`~/.venvs/asr`).
   Copy the words and their start and end times into `audio_meta.json`.
 - **Music and SFX: the media-use audio engine** (`node <skills>/media-use/audio/scripts/audio.mjs
   --request audio_request.json --out audio_meta.json --only bgm,sfx`). It retrieves from the HeyGen
   catalog by description, for example `"bgm": {"mode": "retrieve", "query": "warm calm piano"}`.
   `<skills>` is `~/.claude/skills` for Claude Code, `~/.agents/skills` for Codex/OpenCode/DeepSeek.
 - HeyGen text-to-speech (through the engine or the `heygen` CLI) is the alternative voice, but the
-  free allowance runs out. When it does, use Kokoro.
+  free allowance runs out. When it does, use Kokoro. Music and SFX retrieval also need the `heygen`
+  CLI signed in (`heygen auth login --oauth`) unless `HEYGEN_API_BASE` is set; without it, `sfx` still
+  answers from media-use's bundled library, and the user can supply their own music file.
 
 Write down which provider and voice you actually used.
 

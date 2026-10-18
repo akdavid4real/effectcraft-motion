@@ -16,6 +16,7 @@ Run from the PROJECT directory (the one containing timeline.json and scripts/).
   ec.py look [list | NAME [--accent HEX]]   list the looks, or apply one (writes scripts/look.jsx)
   ec.py compare LOOK_A LOOK_B [--accent HEX]  build the whole video in both looks (copies) -> qa/look_compare.png
   ec.py fonts                       install the kit's fonts (needed once per machine)
+  ec.py doctor                      check this machine has everything the kit needs (and how to get it)
 
 Never edit the same .ecproj in the GUI and with this tool at the same time: the GUI keeps its
 own copy in memory and will overwrite this tool's changes when it saves.
@@ -422,11 +423,64 @@ def cmd_compare(c, a):
           "(references/looks.md). Your project was not changed: apply the winner with `ec.py look NAME`.")
 
 
+def _found(cmd):
+    import shutil
+    return shutil.which(os.path.expanduser(cmd))
+
+
+def cmd_doctor(c=None, a=None):
+    """Each check: (name, required?, ok?, how to get it). Exits 1 when a required one is missing."""
+    try:
+        import numpy  # noqa: F401
+        has_numpy = True
+    except ImportError:
+        has_numpy = False
+    kokoro_py = os.path.expanduser(os.environ.get("HYPERFRAMES_PYTHON", "~/.venvs/kokoro/bin/python"))
+    has_kokoro = os.path.exists(kokoro_py) and subprocess.run(
+        [kokoro_py, "-c", "import kokoro_onnx"], capture_output=True).returncode == 0
+    seen = subprocess.run(["fc-list", ":", "file"], capture_output=True, text=True).stdout if _found("fc-list") else ""
+    seen = {os.path.basename(l.strip().rstrip(":")) for l in seen.splitlines()}
+    has_fonts = all(f in seen for f in os.listdir(FONTS) if f.endswith(".ttf"))
+    skills = [os.path.expanduser(p) for p in ("~/.claude/skills", "~/.agents/skills")]
+    has_media_use = any(os.path.isdir(os.path.join(s, "media-use")) for s in skills)
+    checks = [
+        ("effectcraft-cli", True, bool(_found(CLI)),
+         "install EffectCraft: https://getartcraft.com/apps/effectcraft (or set EFFECTCRAFT_CLI=/path/to/cli)"),
+        ("python3 >= 3.9", True, sys.version_info >= (3, 9), "https://www.python.org/downloads/"),
+        ("numpy", True, has_numpy, "pip install numpy   (or: sudo apt install python3-numpy)"),
+        ("ffmpeg", True, bool(_found("ffmpeg")), "sudo apt install ffmpeg   /   brew install ffmpeg"),
+        ("ffprobe", True, bool(_found("ffprobe")), "comes with ffmpeg"),
+        ("fc-cache (fontconfig)", True, bool(_found("fc-cache")), "sudo apt install fontconfig   /   brew install fontconfig"),
+        ("kit fonts", True, has_fonts, f"python3 {os.path.join(KIT, 'ec.py')} fonts"),
+        ("node + npx (>= 18)", False, bool(_found("npx")),
+         "https://nodejs.org  - voice + word timestamps via `npx hyperframes`"),
+        ("Kokoro voice venv", False, has_kokoro,
+         "python3 -m venv ~/.venvs/kokoro && ~/.venvs/kokoro/bin/pip install kokoro-onnx soundfile"),
+        ("heygen CLI", False, bool(_found("heygen") or os.environ.get("HEYGEN_API_BASE")),
+         "music/SFX catalog + alt. voice: https://developers.heygen.com/cli, then `heygen auth login --oauth`"),
+        ("edge-tts", False, bool(_found("edge-tts") or _found("~/.local/bin/edge-tts")),
+         "alt. free voice (needs internet): pipx install edge-tts"),
+        ("media-use skill", False, has_media_use,
+         "music + SFX engine, from the HyperFrames skills: https://github.com/heygen-com/hyperframes"),
+    ]
+    missing = 0
+    for name, required, ok, how in checks:
+        tag = "OK  " if ok else ("FAIL" if required else "warn")
+        print(f"  {tag}  {name:24}" + ("" if ok else f"  -> {how}"))
+        missing += required and not ok
+    print(f"doctor: {missing} required missing." if missing else "doctor: ready.")
+    if missing:
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(2)
     cmd, args = sys.argv[1], sys.argv[2:]
+    if cmd in ("doctor", "fonts"):  # machine-level: no project needed
+        (cmd_doctor if cmd == "doctor" else cmd_fonts)(None, args)
+        sys.exit(0)
     fn = {"new": cmd_new, "import": cmd_import, "run": cmd_run, "rebuild": cmd_rebuild, "layers": cmd_layers,
           "frames": cmd_frames, "sheet": cmd_sheet, "qa": cmd_qa, "render": cmd_render, "qa-video": cmd_qa_video,
           "look": cmd_look, "compare": cmd_compare, "fonts": cmd_fonts}.get(cmd)
