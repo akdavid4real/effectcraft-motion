@@ -17,6 +17,9 @@ centred text; that is the single biggest reason a generated promo looks cheap.
 **Any agent can use this.** Everything runs from a shell (`effectcraft-cli` through `scripts/ec.py`).
 MCP is optional. Kit location: the folder containing this file (call it `$KIT`).
 
+**Not this kit:** stick-figure / character story videos (split-screen "wrong way vs right way") use the
+`stick-figure-story` skill instead.
+
 ## Golden rules (the reasons are in references/)
 
 1. **Times come from data, not guesses.** The scene plan lives in `timeline.json`. Scene scripts use
