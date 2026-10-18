@@ -212,7 +212,29 @@ def cmd_sheet(c, a):
     print("contact sheets: qa/sheet_1.png qa/sheet_2.png  (open and LOOK at every frame)")
 
 
+def stale_outputs(c):
+    """FAILs for generated files older than what they are made from. In testing, a scene was lengthened and the
+    cuts re-snapped, but timing.jsx and soundtrack.wav were never regenerated: every later scene was built on the
+    old times, the comp kept the old length and the end card vanished 0.8 s early, with QA at 0 fail."""
+    def newest(paths):
+        times = [os.path.getmtime(p) for p in paths if os.path.exists(p)]
+        return max(times) if times else 0
+    fails = []
+    plan = ["timeline.json", "beats.json", c["tl"].get("audio_meta", "audio_meta.json")]
+    if os.path.exists("scripts/timing.jsx") and newest(plan) > os.path.getmtime("scripts/timing.jsx") + 1:
+        fails.append("scripts/timing.jsx is older than timeline.json / beats.json / audio_meta.json: run "
+                     "`timeline.py emit`, then rebuild every scene (`ec.py run reset s1 ... sN wipes`)")
+    sound = plan + glob.glob("assets/voice/*") + glob.glob("assets/sfx/*") + glob.glob("assets/bgm/*")
+    if os.path.exists("soundtrack.wav") and newest(sound) > os.path.getmtime("soundtrack.wav") + 1:
+        fails.append("soundtrack.wav is older than the timeline or the audio files: run `timeline.py mix`, then "
+                     "re-import it (a fresh `ec.py new` + `ec.py import`, or replace the imported item)")
+    return fails
+
+
 def cmd_qa(c, a):
+    stale = stale_outputs(c)
+    for msg in stale:
+        print("FAIL", msg)
     uses_kit = os.path.exists("scripts/lib.jsx") and "function W(" in read("scripts/lib.jsx")
     if uses_kit and not os.path.exists("scripts/look.jsx"):
         print("WARN no look applied: pick one (`ec.py look list`, references/looks.md) and compare two with `ec.py compare A B`. "
@@ -224,8 +246,11 @@ def cmd_qa(c, a):
     brand_js = "var BRAND = " + json.dumps(brand) + ";\n"
     # seconds each line must be fully readable: 0.8 for brand films, ~0.5 for the high-energy style
     brand_js += "var MIN_READ = " + str(float(c["tl"].get("min_read", 0.8))) + ";\n"
+    brand_js += "var TL_DURATION = " + str(float(c["tl"].get("duration", 0))) + ";\n"
     res = run_js(c, brand_js + read(os.path.join(KIT, "qa_comp.jsx")), "qa", with_lib=uses_kit, save=False)
-    if "QA RESULT: 0 fail" not in res:
+    if stale:
+        print(f"QA RESULT (generated files): {len(stale)} fail -> regenerate them before rendering")
+    if "QA RESULT: 0 fail" not in res or stale:
         sys.exit(1)
 
 

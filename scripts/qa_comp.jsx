@@ -13,6 +13,10 @@
 
   var STEP = 0.1;
   var DUR = c.duration;
+  // The comp keeps the length it was created with: after the timeline changes length, recreate it.
+  if (typeof TL_DURATION !== "undefined" && TL_DURATION > 0 && Math.abs(DUR - TL_DURATION) > 0.1)
+    FAIL("the comp is " + f2(DUR) + "s but timeline.json says " + f2(TL_DURATION) + "s: run `timeline.py emit`, then " +
+      "rebuild from s1 with `ec.py run reset s1 ... sN wipes` (reset deletes the comp so s1 recreates it)");
   var SAFE = 0.04; // 4% safe margin
 
   // Background = named like one, or a non-text layer that spans most of the piece (grids, glows).
