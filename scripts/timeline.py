@@ -350,6 +350,11 @@ def cmd_mix(pdir):
     vvol = float(mixcfg.get("voice_volume", 1.6))
     args = ["ffmpeg", "-y", "-v", "error"]
     fc, n, vl = [], 0, []
+    # Music-only films (no voiceover) still need a [vo] chain for the mix graph: use one silent
+    # source as the voice bus. Without this, amix gets inputs=0 and ffmpeg fails.
+    if not any(s.get("voice") and s["voice"] in voices for s in scenes(tl)):
+        args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+        n = 1
     for s in scenes(tl):
         vid = s.get("voice")
         if not vid or vid not in voices:
@@ -361,7 +366,10 @@ def cmd_mix(pdir):
         n += 1
     music = tl.get("music")
     split = ",asplit=2[vo][vokey]" if music else "[vo]"  # the key feeds the music ducker only
-    fc.append("".join(vl) + f"amix=inputs={len(vl)}:normalize=0,apad=whole_dur={dur},atrim=0:{dur}{split}")
+    if vl:
+        fc.append("".join(vl) + f"amix=inputs={len(vl)}:normalize=0,apad=whole_dur={dur},atrim=0:{dur}{split}")
+    else:  # silent voice bus from the anullsrc input added above
+        fc.append(f"[0:a]atrim=0:{dur},asetpts=PTS-STARTPTS{split}")
     xl = []
     beats = load_beats(pdir)
     for cue in tl.get("sfx", []):
